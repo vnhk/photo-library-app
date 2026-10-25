@@ -11,10 +11,14 @@ import org.springframework.core.io.support.ResourceRegion;
 import org.springframework.http.*;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
+import jakarta.servlet.http.HttpServletResponse;
 
 import java.io.File;
 import java.io.IOException;
+import java.nio.file.Files;
 import java.util.*;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipOutputStream;
 
 @RestController
 @RequestMapping("/api/photos")
@@ -47,7 +51,8 @@ public class PhotoLibraryApiController {
     @GetMapping("/{id}/file")
     public ResponseEntity<?> getFile(
             @PathVariable UUID id,
-            @RequestHeader(value = "Range", required = false) String rangeHeader
+            @RequestHeader(value = "Range", required = false) String rangeHeader,
+            @RequestParam(value = "download", required = false) Boolean download
     ) throws IOException {
         File file = photoStorageService.getPhysicalFile(id);
         if (file == null || !file.exists()) {
@@ -81,12 +86,74 @@ public class PhotoLibraryApiController {
             }
         }
 
-        return ResponseEntity.ok()
+        var responseBuilder = ResponseEntity.ok()
                 .contentType(mediaType)
                 .contentLength(contentLength)
                 .header(HttpHeaders.ACCEPT_RANGES, "bytes")
-                .header(HttpHeaders.CACHE_CONTROL, "max-age=86400, public")
-                .body(resource);
+                .header(HttpHeaders.CACHE_CONTROL, "max-age=86400, public");
+
+        if (Boolean.TRUE.equals(download)) {
+            responseBuilder.header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + file.getName() + "\"");
+        }
+
+        return responseBuilder.body(resource);
+    }
+
+    @PostMapping(value = "/download-zip")
+    public void downloadZip(@RequestBody List<UUID> ids, HttpServletResponse response) throws IOException {
+        response.setContentType("application/zip");
+        response.setHeader(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"photos_" + System.currentTimeMillis() + ".zip\"");
+        try (ZipOutputStream zos = new ZipOutputStream(response.getOutputStream())) {
+            Set<String> usedNames = new HashSet<>();
+            if (ids != null) {
+                for (UUID id : ids) {
+                    File file = photoStorageService.getPhysicalFile(id);
+                    if (file != null && file.exists()) {
+                        String entryName = file.getName();
+                        int counter = 1;
+                        while (usedNames.contains(entryName)) {
+                            entryName = counter + "_" + file.getName();
+                            counter++;
+                        }
+                        usedNames.add(entryName);
+                        zos.putNextEntry(new ZipEntry(entryName));
+                        Files.copy(file.toPath(), zos);
+                        zos.closeEntry();
+                    }
+                }
+            }
+        }
+    }
+
+    @GetMapping(value = "/albums/{id}/download-zip")
+    public void downloadAlbumZip(@PathVariable String id, HttpServletResponse response) throws IOException {
+        PhotoAlbum album = photoStorageService.getAlbumById(id);
+        if (album == null) {
+            response.setStatus(HttpStatus.NOT_FOUND.value());
+            return;
+        }
+        List<PhotoItem> items = photoStorageService.getPhotos(id, null, null, null, null);
+        String safeName = (album.getName() != null ? album.getName() : "album").replaceAll("[^a-zA-Z0-9._-]", "_");
+        response.setContentType("application/zip");
+        response.setHeader(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + safeName + ".zip\"");
+        try (ZipOutputStream zos = new ZipOutputStream(response.getOutputStream())) {
+            Set<String> usedNames = new HashSet<>();
+            for (PhotoItem item : items) {
+                File file = photoStorageService.getPhysicalFile(item.getId());
+                if (file != null && file.exists()) {
+                    String entryName = file.getName();
+                    int counter = 1;
+                    while (usedNames.contains(entryName)) {
+                        entryName = counter + "_" + file.getName();
+                        counter++;
+                    }
+                    usedNames.add(entryName);
+                    zos.putNextEntry(new ZipEntry(entryName));
+                    Files.copy(file.toPath(), zos);
+                    zos.closeEntry();
+                }
+            }
+        }
     }
 
     @GetMapping("/{id}/thumbnail")
