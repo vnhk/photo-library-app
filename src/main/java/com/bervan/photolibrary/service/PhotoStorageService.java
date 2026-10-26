@@ -35,7 +35,7 @@ public class PhotoStorageService {
     private final PhotoMetadataExtractorService extractorService;
     private final ObjectMapper objectMapper = new ObjectMapper().registerModule(new JavaTimeModule());
 
-    @Value("${photo-library.file-storage-relative-path}")
+    @Value("${photo-library.file-storage-relative-path:/Photo Library}")
     private String photoRelativePath;
 
     private final Map<UUID, PhotoItem> itemsById = new ConcurrentHashMap<>();
@@ -71,7 +71,7 @@ public class PhotoStorageService {
     }
 
     public String getPhotoRelativePath() {
-        String path = (photoRelativePath != null && !photoRelativePath.isBlank())
+        String path = (photoRelativePath != null && !photoRelativePath.isBlank() && !photoRelativePath.startsWith("${"))
                 ? photoRelativePath.trim()
                 : "/Photo Library";
         if (!path.startsWith("/")) path = "/" + path;
@@ -93,16 +93,24 @@ public class PhotoStorageService {
     public synchronized void reloadLibrary() {
         log.info("Starting Photo Library reload from: {}", getPhotoRelativePath());
         Path root = getPhotoLibraryRoot();
+        String rootDirName = root.getFileName().toString();
 
         String rootStoragePath = ensureStoragePathEndsWithSlash(getPhotoRelativePath());
         try {
-            if (!Files.exists(root)) {
-                fileServiceManager.createEmptyDirectory("/", root.getFileName().toString());
-            } else {
-                ensureDirectoryMetadata("/", root.getFileName().toString());
+            List<Metadata> existing = fileDBStorageService.loadByPathAndFilename("/", rootDirName);
+            boolean onDisk = Files.exists(root);
+
+            if (existing.isEmpty()) {
+                if (!onDisk) {
+                    fileServiceManager.createEmptyDirectory("/", rootDirName);
+                } else {
+                    fileDBStorageService.createEmptyDirectory("/", rootDirName);
+                }
+            } else if (!onDisk) {
+                fileDiskStorageService.createEmptyDirectory("/", rootDirName);
             }
         } catch (Exception e) {
-            log.warn("Could not ensure root directory: {}", e.getMessage());
+            log.warn("Could not ensure root directory {}: {}", rootDirName, e.getMessage());
         }
 
         loadLibraryData();
