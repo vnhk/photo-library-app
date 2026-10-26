@@ -9,23 +9,15 @@ import java.io.File;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.Map;
 import java.util.UUID;
-import java.util.concurrent.ConcurrentHashMap;
 
 @Service
 public class PhotoThumbnailService {
     private final JsonLogger log = JsonLogger.getLogger(getClass(), "photo-library");
-    private final Map<UUID, byte[]> memoryCache = new ConcurrentHashMap<>();
 
     public byte[] getOrCreateThumbnail(UUID photoId, File sourceFile, Path libraryRoot) {
         if (photoId == null || sourceFile == null || !sourceFile.exists()) {
             return null;
-        }
-
-        byte[] cached = memoryCache.get(photoId);
-        if (cached != null) {
-            return cached;
         }
 
         try {
@@ -35,13 +27,12 @@ public class PhotoThumbnailService {
             }
             Path thumbFile = thumbDir.resolve(photoId.toString() + ".jpg");
 
+            // If thumbnail already exists on disk, read and return directly (no RAM retention, OS page cache handles speed)
             if (Files.exists(thumbFile) && Files.size(thumbFile) > 0) {
-                byte[] bytes = Files.readAllBytes(thumbFile);
-                memoryCache.put(photoId, bytes);
-                return bytes;
+                return Files.readAllBytes(thumbFile);
             }
 
-            // Generate thumbnail
+            // Generate thumbnail and persist to disk
             ByteArrayOutputStream baos = new ByteArrayOutputStream();
             Thumbnails.of(sourceFile)
                     .size(420, 420)
@@ -51,7 +42,6 @@ public class PhotoThumbnailService {
 
             byte[] generated = baos.toByteArray();
             Files.write(thumbFile, generated);
-            memoryCache.put(photoId, generated);
             return generated;
         } catch (Exception e) {
             log.warn("Failed to generate thumbnail for {}: {}", photoId, e.getMessage());
@@ -60,17 +50,10 @@ public class PhotoThumbnailService {
     }
 
     public void evict(UUID photoId, Path libraryRoot) {
-        if (photoId == null) return;
-        memoryCache.remove(photoId);
+        if (photoId == null || libraryRoot == null) return;
         try {
-            if (libraryRoot != null) {
-                Path thumbFile = libraryRoot.resolve(".thumbnails").resolve(photoId.toString() + ".jpg");
-                Files.deleteIfExists(thumbFile);
-            }
+            Path thumbFile = libraryRoot.resolve(".thumbnails").resolve(photoId.toString() + ".jpg");
+            Files.deleteIfExists(thumbFile);
         } catch (IOException ignored) {}
-    }
-
-    public void clearMemory() {
-        memoryCache.clear();
     }
 }
