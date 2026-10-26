@@ -35,7 +35,7 @@ public class PhotoStorageService {
     private final PhotoMetadataExtractorService extractorService;
     private final ObjectMapper objectMapper = new ObjectMapper().registerModule(new JavaTimeModule());
 
-    @Value("${photo-library.file-storage-relative-path:/Photo Library}")
+    @Value("${photo-library.file-storage-relative-path}")
     private String photoRelativePath;
 
     private final Map<UUID, PhotoItem> itemsById = new ConcurrentHashMap<>();
