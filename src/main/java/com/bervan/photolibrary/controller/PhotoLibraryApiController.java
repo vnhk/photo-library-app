@@ -261,6 +261,7 @@ public class PhotoLibraryApiController {
         if (fn.endsWith(".jpg") || fn.endsWith(".jpeg")) return org.springframework.http.MediaType.IMAGE_JPEG;
         if (fn.endsWith(".png")) return org.springframework.http.MediaType.IMAGE_PNG;
         if (fn.endsWith(".webp")) return org.springframework.http.MediaType.parseMediaType("image/webp");
+        if (fn.endsWith(".heic") || fn.endsWith(".heif")) return org.springframework.http.MediaType.parseMediaType("image/heic");
         if (fn.endsWith(".gif")) return org.springframework.http.MediaType.IMAGE_GIF;
         if (fn.endsWith(".mp4")) return org.springframework.http.MediaType.parseMediaType("video/mp4");
         if (fn.endsWith(".webm")) return org.springframework.http.MediaType.parseMediaType("video/webm");
