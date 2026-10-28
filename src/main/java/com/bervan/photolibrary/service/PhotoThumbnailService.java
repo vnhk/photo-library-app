@@ -75,6 +75,10 @@ public class PhotoThumbnailService {
             "mov", "mp4", "webm", "mkv", "avi", "m4v"
     );
 
+    private static final java.util.Set<String> HEIC_EXTENSIONS = java.util.Set.of(
+            "heic", "heif", "hif"
+    );
+
     private boolean isVideoFile(File file) {
         if (file == null) return false;
         String name = file.getName().toLowerCase();
@@ -83,12 +87,21 @@ public class PhotoThumbnailService {
         return VIDEO_EXTENSIONS.contains(name.substring(idx + 1));
     }
 
+    private boolean isHeicFile(File file) {
+        if (file == null) return false;
+        String name = file.getName().toLowerCase();
+        int idx = name.lastIndexOf('.');
+        if (idx < 0) return false;
+        return HEIC_EXTENSIONS.contains(name.substring(idx + 1));
+    }
+
     private byte[] tryGenerateVideoThumbnailWithFfmpeg(File videoFile) {
         try {
             Process process = new ProcessBuilder(
                     "ffmpeg", "-ss", "00:00:00.500", "-i", videoFile.getAbsolutePath(),
+                    "-vf", "scale=420:420:force_original_aspect_ratio=decrease",
                     "-vframes", "1", "-f", "image2pipe", "-vcodec", "mjpeg", "-"
-            ).start();
+            ).redirectError(ProcessBuilder.Redirect.DISCARD).start();
 
             try (var is = process.getInputStream()) {
                 byte[] bytes = is.readAllBytes();
@@ -100,6 +113,28 @@ public class PhotoThumbnailService {
             }
         } catch (Exception ignored) {
             // ffmpeg not installed or not in PATH, will fall back to client-side capture
+        }
+        return null;
+    }
+
+    private byte[] tryGenerateImageThumbnailWithFfmpeg(File imageFile) {
+        try {
+            Process process = new ProcessBuilder(
+                    "ffmpeg", "-i", imageFile.getAbsolutePath(),
+                    "-vf", "scale=420:420:force_original_aspect_ratio=decrease",
+                    "-vframes", "1", "-f", "image2pipe", "-vcodec", "mjpeg", "-q:v", "3", "-"
+            ).redirectError(ProcessBuilder.Redirect.DISCARD).start();
+
+            try (var is = process.getInputStream()) {
+                byte[] bytes = is.readAllBytes();
+                int exitCode = process.waitFor();
+                if (exitCode == 0 && bytes.length > 0) {
+                    log.info("Extracted image thumbnail via ffmpeg for: {}", imageFile.getName());
+                    return bytes;
+                }
+            }
+        } catch (Exception ignored) {
+            // ffmpeg not installed or not in PATH, will fall back
         }
         return null;
     }
@@ -140,17 +175,37 @@ public class PhotoThumbnailService {
                 return null;
             }
 
-            // Generate thumbnail using Thumbnailator for images
-            ByteArrayOutputStream baos = new ByteArrayOutputStream();
-            Thumbnails.of(sourceFile)
-                    .size(420, 420)
-                    .outputFormat("jpg")
-                    .outputQuality(0.82)
-                    .toOutputStream(baos);
+            if (isHeicFile(sourceFile)) {
+                byte[] heicThumb = tryGenerateImageThumbnailWithFfmpeg(sourceFile);
+                if (heicThumb != null && heicThumb.length > 0) {
+                    saveOrUpdateThumbnail(photoId, heicThumb);
+                    return heicThumb;
+                }
+                return null;
+            }
 
-            byte[] generated = baos.toByteArray();
-            saveOrUpdateThumbnail(photoId, generated);
-            return generated;
+            try {
+                // Generate thumbnail using Thumbnailator for standard images
+                ByteArrayOutputStream baos = new ByteArrayOutputStream();
+                Thumbnails.of(sourceFile)
+                        .size(420, 420)
+                        .outputFormat("jpg")
+                        .outputQuality(0.82)
+                        .toOutputStream(baos);
+
+                byte[] generated = baos.toByteArray();
+                saveOrUpdateThumbnail(photoId, generated);
+                return generated;
+            } catch (Exception e) {
+                // Fallback to ffmpeg for other image types not supported by ImageIO (e.g. webp, tiff)
+                byte[] ffmpegFallback = tryGenerateImageThumbnailWithFfmpeg(sourceFile);
+                if (ffmpegFallback != null && ffmpegFallback.length > 0) {
+                    saveOrUpdateThumbnail(photoId, ffmpegFallback);
+                    return ffmpegFallback;
+                }
+                log.warn("Failed to generate thumbnail for {}: {}", photoId, e.getMessage());
+                return null;
+            }
         } catch (Exception e) {
             log.warn("Failed to generate thumbnail for {}: {}", photoId, e.getMessage());
             return null;
