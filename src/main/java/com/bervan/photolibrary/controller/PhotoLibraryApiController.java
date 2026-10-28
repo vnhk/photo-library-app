@@ -1,20 +1,23 @@
 package com.bervan.photolibrary.controller;
 
+import com.bervan.filestorage.dto.ByteRange;
 import com.bervan.logging.JsonLogger;
 import com.bervan.photolibrary.model.MediaType;
 import com.bervan.photolibrary.model.PhotoAlbum;
 import com.bervan.photolibrary.model.PhotoItem;
 import com.bervan.photolibrary.service.PhotoStorageService;
-import org.springframework.core.io.FileSystemResource;
-import org.springframework.core.io.Resource;
-import org.springframework.core.io.support.ResourceRegion;
-import org.springframework.http.*;
+import jakarta.servlet.http.HttpServletResponse;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
-import jakarta.servlet.http.HttpServletResponse;
+import org.springframework.web.servlet.mvc.method.annotation.StreamingResponseBody;
 
 import java.io.File;
 import java.io.IOException;
+import java.io.InputStream;
+import java.io.RandomAccessFile;
 import java.nio.file.Files;
 import java.util.*;
 import java.util.zip.ZipEntry;
@@ -49,53 +52,66 @@ public class PhotoLibraryApiController {
     }
 
     @GetMapping("/{id}/file")
-    public ResponseEntity<?> getFile(
+    public ResponseEntity<StreamingResponseBody> getFile(
             @PathVariable UUID id,
             @RequestHeader(value = "Range", required = false) String rangeHeader,
             @RequestParam(value = "download", required = false) Boolean download
-    ) throws IOException {
+    ) {
         File file = photoStorageService.getPhysicalFile(id);
         if (file == null || !file.exists()) {
             return ResponseEntity.notFound().build();
         }
 
-        Resource resource = new FileSystemResource(file);
-        long contentLength = file.length();
-        String filename = file.getName().toLowerCase();
-        org.springframework.http.MediaType mediaType = resolveMediaType(filename);
+        long fileSize = file.length();
+        String filename = file.getName();
+        String lowerName = filename.toLowerCase();
+        org.springframework.http.MediaType mediaType = resolveMediaType(lowerName);
+
+        String disposition = Boolean.TRUE.equals(download)
+                ? "attachment; filename=\"" + filename + "\""
+                : "inline; filename=\"" + filename + "\"";
 
         // Byte-range streaming for video / large media
-        if (rangeHeader != null && !rangeHeader.isBlank()) {
+        if (rangeHeader != null && rangeHeader.startsWith("bytes=")) {
             try {
-                List<HttpRange> ranges = HttpRange.parseRanges(rangeHeader);
-                if (!ranges.isEmpty()) {
-                    HttpRange range = ranges.get(0);
-                    long start = range.getRangeStart(contentLength);
-                    long end = range.getRangeEnd(contentLength);
-                    long rangeLength = end - start + 1;
-                    ResourceRegion region = new ResourceRegion(resource, start, rangeLength);
+                ByteRange byteRange = ByteRange.parse(rangeHeader, fileSize);
+                log.info("Range streaming photo/video id={} range={}-{} length={}", id, byteRange.start(), byteRange.end(), byteRange.contentLength());
 
-                    return ResponseEntity.status(HttpStatus.PARTIAL_CONTENT)
-                            .contentType(mediaType)
-                            .header(HttpHeaders.ACCEPT_RANGES, "bytes")
-                            .body(region);
-                }
+                return ResponseEntity.status(HttpStatus.PARTIAL_CONTENT)
+                        .contentType(mediaType)
+                        .header(HttpHeaders.CONTENT_RANGE, byteRange.toContentRangeHeader(fileSize))
+                        .header(HttpHeaders.ACCEPT_RANGES, "bytes")
+                        .header(HttpHeaders.CONTENT_DISPOSITION, disposition)
+                        .contentLength(byteRange.contentLength())
+                        .body(outputStream -> {
+                            try (RandomAccessFile raf = new RandomAccessFile(file, "r")) {
+                                raf.seek(byteRange.start());
+                                byte[] buffer = new byte[64 * 1024];
+                                long remaining = byteRange.contentLength();
+                                while (remaining > 0) {
+                                    int read = raf.read(buffer, 0, (int) Math.min(buffer.length, remaining));
+                                    if (read == -1) break;
+                                    outputStream.write(buffer, 0, read);
+                                    remaining -= read;
+                                }
+                            }
+                        });
             } catch (Exception e) {
-                log.warn("Could not parse Range header {}: {}", rangeHeader, e.getMessage());
+                log.warn("Invalid range header {}: {}", rangeHeader, e.getMessage());
             }
         }
 
-        var responseBuilder = ResponseEntity.ok()
+        return ResponseEntity.ok()
                 .contentType(mediaType)
-                .contentLength(contentLength)
+                .contentLength(fileSize)
                 .header(HttpHeaders.ACCEPT_RANGES, "bytes")
-                .header(HttpHeaders.CACHE_CONTROL, "max-age=86400, public");
-
-        if (Boolean.TRUE.equals(download)) {
-            responseBuilder.header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + file.getName() + "\"");
-        }
-
-        return responseBuilder.body(resource);
+                .header(HttpHeaders.CONTENT_DISPOSITION, disposition)
+                .header(HttpHeaders.CACHE_CONTROL, "max-age=86400, public")
+                .body(outputStream -> {
+                    try (InputStream is = Files.newInputStream(file.toPath())) {
+                        is.transferTo(outputStream);
+                    }
+                });
     }
 
     @PostMapping(value = "/download-zip")

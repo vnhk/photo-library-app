@@ -71,6 +71,39 @@ public class PhotoThumbnailService {
         }
     }
 
+    private static final java.util.Set<String> VIDEO_EXTENSIONS = java.util.Set.of(
+            "mov", "mp4", "webm", "mkv", "avi", "m4v"
+    );
+
+    private boolean isVideoFile(File file) {
+        if (file == null) return false;
+        String name = file.getName().toLowerCase();
+        int idx = name.lastIndexOf('.');
+        if (idx < 0) return false;
+        return VIDEO_EXTENSIONS.contains(name.substring(idx + 1));
+    }
+
+    private byte[] tryGenerateVideoThumbnailWithFfmpeg(File videoFile) {
+        try {
+            Process process = new ProcessBuilder(
+                    "ffmpeg", "-ss", "00:00:00.500", "-i", videoFile.getAbsolutePath(),
+                    "-vframes", "1", "-f", "image2pipe", "-vcodec", "mjpeg", "-"
+            ).start();
+
+            try (var is = process.getInputStream()) {
+                byte[] bytes = is.readAllBytes();
+                int exitCode = process.waitFor();
+                if (exitCode == 0 && bytes.length > 0) {
+                    log.info("Extracted video thumbnail via ffmpeg for: {}", videoFile.getName());
+                    return bytes;
+                }
+            }
+        } catch (Exception ignored) {
+            // ffmpeg not installed or not in PATH, will fall back to client-side capture
+        }
+        return null;
+    }
+
     public byte[] getOrCreateThumbnail(UUID photoId, File sourceFile) {
         if (photoId == null || sourceFile == null || !sourceFile.exists()) {
             return null;
@@ -98,7 +131,16 @@ public class PhotoThumbnailService {
                 }
             }
 
-            // Generate thumbnail using Thumbnailator
+            if (isVideoFile(sourceFile)) {
+                byte[] ffmpegThumb = tryGenerateVideoThumbnailWithFfmpeg(sourceFile);
+                if (ffmpegThumb != null && ffmpegThumb.length > 0) {
+                    saveOrUpdateThumbnail(photoId, ffmpegThumb);
+                    return ffmpegThumb;
+                }
+                return null;
+            }
+
+            // Generate thumbnail using Thumbnailator for images
             ByteArrayOutputStream baos = new ByteArrayOutputStream();
             Thumbnails.of(sourceFile)
                     .size(420, 420)
