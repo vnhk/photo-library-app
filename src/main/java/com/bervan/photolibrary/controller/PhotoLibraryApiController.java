@@ -72,13 +72,12 @@ public class PhotoLibraryApiController {
                     HttpRange range = ranges.get(0);
                     long start = range.getRangeStart(contentLength);
                     long end = range.getRangeEnd(contentLength);
-                    long rangeLength = Math.min(1024 * 1024 * 2L, end - start + 1); // 2MB chunk
+                    long rangeLength = end - start + 1;
                     ResourceRegion region = new ResourceRegion(resource, start, rangeLength);
 
                     return ResponseEntity.status(HttpStatus.PARTIAL_CONTENT)
                             .contentType(mediaType)
                             .header(HttpHeaders.ACCEPT_RANGES, "bytes")
-                            .header(HttpHeaders.CONTENT_RANGE, "bytes " + start + "-" + (start + rangeLength - 1) + "/" + contentLength)
                             .body(region);
                 }
             } catch (Exception e) {
@@ -166,6 +165,12 @@ public class PhotoLibraryApiController {
                 .contentType(org.springframework.http.MediaType.IMAGE_JPEG)
                 .header(HttpHeaders.CACHE_CONTROL, "max-age=604800, public")
                 .body(thumb);
+    }
+
+    @PostMapping("/{id}/thumbnail")
+    public ResponseEntity<Void> uploadThumbnail(@PathVariable UUID id, @RequestBody byte[] bytes) {
+        photoStorageService.saveThumbnail(id, bytes);
+        return ResponseEntity.ok().build();
     }
 
     @PostMapping("/upload")

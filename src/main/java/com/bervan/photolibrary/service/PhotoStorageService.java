@@ -376,6 +376,10 @@ public class PhotoStorageService {
         return thumbnailService.getOrCreateThumbnail(id, f, getPhotoLibraryRoot());
     }
 
+    public void saveThumbnail(UUID id, byte[] thumbnailBytes) {
+        thumbnailService.saveThumbnail(id, thumbnailBytes, getPhotoLibraryRoot());
+    }
+
     public List<PhotoAlbum> getAlbums() {
         refreshAlbums();
         return new ArrayList<>(albumsById.values());

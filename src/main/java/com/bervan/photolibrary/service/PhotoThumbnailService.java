@@ -49,6 +49,21 @@ public class PhotoThumbnailService {
         }
     }
 
+    public void saveThumbnail(UUID photoId, byte[] thumbnailBytes, Path libraryRoot) {
+        if (photoId == null || thumbnailBytes == null || thumbnailBytes.length == 0 || libraryRoot == null) return;
+        try {
+            Path thumbDir = libraryRoot.resolve(".thumbnails");
+            if (!Files.exists(thumbDir)) {
+                Files.createDirectories(thumbDir);
+            }
+            Path thumbFile = thumbDir.resolve(photoId.toString() + ".jpg");
+            Files.write(thumbFile, thumbnailBytes);
+            log.info("Saved client-provided thumbnail to disk for: {}", photoId);
+        } catch (Exception e) {
+            log.warn("Failed to persist thumbnail for {}: {}", photoId, e.getMessage());
+        }
+    }
+
     public void evict(UUID photoId, Path libraryRoot) {
         if (photoId == null || libraryRoot == null) return;
         try {
