@@ -373,11 +373,11 @@ public class PhotoStorageService {
         PhotoItem item = itemsById.get(id);
         if (item == null) return null;
         File f = getPhysicalFile(id);
-        return thumbnailService.getOrCreateThumbnail(id, f, getPhotoLibraryRoot());
+        return thumbnailService.getOrCreateThumbnail(id, f);
     }
 
     public void saveThumbnail(UUID id, byte[] thumbnailBytes) {
-        thumbnailService.saveThumbnail(id, thumbnailBytes, getPhotoLibraryRoot());
+        thumbnailService.saveThumbnail(id, thumbnailBytes);
     }
 
     public List<PhotoAlbum> getAlbums() {
@@ -505,7 +505,7 @@ public class PhotoStorageService {
             if (id.equals(a.getCoverPhotoId())) a.setCoverPhotoId(null);
         }
 
-        thumbnailService.evict(id, getPhotoLibraryRoot());
+        thumbnailService.evict(id);
 
         try {
             List<Metadata> found = fileDBStorageService.loadByPathAndFilename(item.getPath(), item.getFilename());
